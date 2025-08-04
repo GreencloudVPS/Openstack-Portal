@@ -1,3 +1,4 @@
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -804,38 +805,59 @@ class AdminProjectQuotaView(APIView):
         except Exception as e:
             return Response({"error": f"Unexpected error: {str(e)}"}, status=500)
 
-
 class AdminProjectVMsView(APIView):
     permission_classes = [IsAdmin]
 
     def get(self, request, openstack_id):
+        timings = {}
+
+        t0 = time.time()
         project = get_object_or_404(Project, openstack_id=openstack_id)
         project_id = request.auth.get("project_id")
+        timings['get_project'] = round(time.time() - t0, 4)
 
+        t1 = time.time()
         token = AdminProjectDetailView.get_token_from_redis(request.user.username, project_id)
+        timings['get_token'] = round(time.time() - t1, 4)
+
         if not token:
             return Response({"error": "Token not found in Redis."}, status=401)
 
         try:
+            t2 = time.time()
             conn = connect_with_token_v5(token, project_id)
+            timings['connect_openstack'] = round(time.time() - t2, 4)
+
+            t3 = time.time()
             flavors = conn.list_flavors()
+            timings['list_flavors'] = round(time.time() - t3, 4)
+
             flavor_map = {str(f.id): f for f in flavors}
             flavor_map.update({str(f.name): f for f in flavors})
 
-            servers = conn.list_servers(
-                filters={'project_id': project.openstack_id}
-            )
+            t4 = time.time()
+            servers = conn.list_servers(filters={'project_id': project.openstack_id})
+            timings['list_servers'] = round(time.time() - t4, 4)
 
+            t5 = time.time()
             vms, cpu_used, ram_used = AdminProjectDetailView().extract_vm_info(servers, project.openstack_id, flavor_map)
+            timings['extract_vm_info'] = round(time.time() - t5, 4)
+
+            total_time = round(time.time() - t0, 4)
 
             return Response({
                 "cpu_used": cpu_used,
                 "ram_used": ram_used,
-                "vms": vms
+                "vms": vms,
+                "timing": timings,
+                "total_time": total_time
             })
 
         except Exception as e:
-            return Response({"error": f"Failed to retrieve VM data: {str(e)}"}, status=500)
+            return Response({
+                "error": f"Failed to retrieve VM data: {str(e)}",
+                "timing": timings
+            }, status=500)
 class ChangeOwnerProjectView(APIView):
     permission_classes = [IsAdmin]
 
