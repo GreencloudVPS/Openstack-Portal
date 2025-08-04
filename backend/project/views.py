@@ -810,6 +810,7 @@ class AdminProjectVMsView(APIView):
     permission_classes = [IsAdmin]
 
     def get(self, request, openstack_id):
+        project_id = request.auth.get("project_id")
         timings = {}
 
         try:
@@ -818,14 +819,14 @@ class AdminProjectVMsView(APIView):
             timings['get_project'] = round(time.time() - t0, 4)
 
             t1 = time.time()
-            token = AdminProjectDetailView.get_token_from_redis(request.user.username, project.openstack_id)
+            token = AdminProjectDetailView.get_token_from_redis(request.user.username, project_id)
             timings['get_token'] = round(time.time() - t1, 4)
 
             if not token:
                 return Response({"error": "Token not found in Redis."}, status=401)
 
             t2 = time.time()
-            conn = connect_with_token_v5(token, project.openstack_id)
+            conn = connect_with_token_v5(token, project_id)
             timings['connect_openstack'] = round(time.time() - t2, 4)
 
             t3 = time.time()
@@ -841,7 +842,7 @@ class AdminProjectVMsView(APIView):
             headers = {"X-Auth-Token": token}
             params = {
                 "all_tenants": 1,
-                "project_id": project.openstack_id,
+                "project_id": openstack_id,
                 "fields": "id,name,status,created,flavor,addresses"
             }
 
