@@ -1,0 +1,53 @@
+/* Tooltip show/hide on focus/hover */
+[role="img"]:hover [role="tooltip"],
+[role="img"]:focus [role="tooltip"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 10px);
+}
+
+/* Reduced holographic effect removed for minimalism */
+/* Text styling */
+.text-white {
+  color: #ffffff;
+}
+
+.font-semibold {
+  font-weight: 600;
+}
+
+.font-mono {
+  font-family: monospace, monospace;
+}
+
+.bg-gray-900 {
+  background-color: #111827;
+}
+
+.bg-opacity-90 {
+  opacity: 0.9;
+}
+
+.rounded-lg {
+  border-radius: 0.5rem;
+}
+
+.shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.4), 0 4px 6px -4px rgba(0,0,0,0.3);
+}
+
+.pointer-events-none {
+  pointer-events: none;
+}
+
+.transition-opacity {
+  transition-property: opacity;
+}
+
+.duration-300 {
+  transition-duration: 300ms;
+}
+
+.cursor-help {
+  cursor: help;
+}

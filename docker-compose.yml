@@ -1,0 +1,78 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: portalops-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DJANGO_SETTINGS_MODULE: backend.settings.base
+      CELERY_BROKER_URL: redis://redis:6379/0
+
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: portalops-celery
+    command: celery -A backend worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    depends_on:
+      - backend
+      - redis
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DJANGO_SETTINGS_MODULE: backend.settings.base
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: portalops-celery-beat
+    command: celery -A backend beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    depends_on:
+      - backend
+      - redis
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DJANGO_SETTINGS_MODULE: backend.settings.base
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: portalops-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: portalops-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
