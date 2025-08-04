@@ -805,6 +805,7 @@ class AdminProjectQuotaView(APIView):
         except Exception as e:
             return Response({"error": f"Unexpected error: {str(e)}"}, status=500)
 
+
 class AdminProjectVMsView(APIView):
     permission_classes = [IsAdmin]
 
@@ -836,8 +837,19 @@ class AdminProjectVMsView(APIView):
             flavor_map.update({str(f.name): f for f in flavors})
 
             t4 = time.time()
-            servers = conn.list_servers(filters={'project_id': project.openstack_id})
-            timings['list_servers'] = round(time.time() - t4, 4)
+            nova_endpoint = conn.session.get_endpoint(service_type='compute', interface='public')
+            url = f"{nova_endpoint}/servers/detail"
+            headers = {"X-Auth-Token": token}
+            params = {
+                "all_tenants": 1,
+                "project_id": project.openstack_id,
+                "fields": "id,name,status,created,flavor,addresses"
+            }
+
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response.raise_for_status()
+            servers = response.json().get("servers", [])
+            timings['list_servers_rest'] = round(time.time() - t4, 4)
 
             t5 = time.time()
             vms, cpu_used, ram_used = AdminProjectDetailView().extract_vm_info(servers, project.openstack_id, flavor_map)
