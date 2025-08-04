@@ -823,7 +823,6 @@ class AdminProjectVMsView(APIView):
             flavor_map.update({str(f.name): f for f in flavors})
 
             servers = conn.list_servers(
-                all_projects=True,
                 filters={'project_id': project.openstack_id}
             )
 

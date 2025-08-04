@@ -393,50 +393,52 @@ export default function AdminProjectDetailPage() {
                 )}
               </Card>
 
-              {/* Virtual Machines */}
-              <Card title="Virtual Machines">
-                {loading.vms ? <CardSpinner /> : vms?.vms?.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr className="text-gray-300 border-b border-gray-700">
-                          <th className="py-3 px-4 font-semibold">Name</th>
-                          <th className="py-3 px-4 font-semibold">Status</th>
-                          <th className="py-3 px-4 font-semibold">IP Address</th>
-                          <th className="py-3 px-4 font-semibold">Created</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {vms.length > 0 ? vms.map((vm) => (
-                          <tr key={vm.id} className="border-b border-gray-700 hover:bg-gray-800">
-                            <td className="py-3 px-4 font-medium text-white">{vm.name}</td>
-                            <td className="py-3 px-4">
-                              <span className={`px-2 py-1 rounded text-xs font-medium ${vm.status === "Running" ? "bg-green-600 text-white" :
-                                vm.status === "Stopped" ? "bg-red-600 text-white" :
-                                  "bg-yellow-600 text-white"
-                                }`}>
-                                {vm.status}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 text-gray-300">{vm.ip || "—"}</td>
-                            <td className="py-3 px-4 text-gray-300">{vm.created}</td>
-                          </tr>
-                        )) : (
-                          <tr>
-                            <td colSpan="4" className="py-8 text-center text-gray-400">
-                              No virtual machines found
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="py-8 text-center text-gray-400">
-                    {vms ? "No virtual machines found" : "Could not load VM data."}
-                  </div>
-                )}
-              </Card>
+             {/* Virtual Machines */}
+<Card title="Virtual Machines">
+  {loading.vms ? (
+    <CardSpinner />
+  ) : (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="text-gray-300 border-b border-gray-700">
+            <th className="py-3 px-4 font-semibold">Name</th>
+            <th className="py-3 px-4 font-semibold">Status</th>
+            <th className="py-3 px-4 font-semibold">IP Address</th>
+            <th className="py-3 px-4 font-semibold">Created</th>
+          </tr>
+        </thead>
+        <tbody>
+          {vms?.vms?.length > 0 ? (
+            vms.vms.map((vm) => (
+              <tr key={vm.id} className="border-b border-gray-700 hover:bg-gray-800">
+                <td className="py-3 px-4 font-medium text-white">{vm.name}</td>
+                <td className="py-3 px-4">
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    vm.status === "Running" ? "bg-green-600 text-white" :
+                    vm.status === "Stopped" ? "bg-red-600 text-white" :
+                    "bg-yellow-600 text-white"
+                  }`}>
+                    {vm.status}
+                  </span>
+                </td>
+                <td className="py-3 px-4 text-gray-300">{vm.ip || "—"}</td>
+                <td className="py-3 px-4 text-gray-300">{vm.created}</td>
+              </tr>
+            ))
+          ) : (
+            // SỬA Ở ĐÂY: Đặt thông báo trong cấu trúc tr > td hợp lệ
+            <tr>
+              <td colSpan="4" className="py-8 text-center text-gray-400">
+                {vms ? "No virtual machines found" : "Could not load VM data."}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )}
+</Card>
 
               {/* Floating IPs */}
               <Card title="Floating IP Addresses">
