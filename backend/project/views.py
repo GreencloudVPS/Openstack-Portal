@@ -1,5 +1,6 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 import requests
 from django.conf import settings
@@ -586,8 +587,22 @@ class ReplaceProjectOwnerView(APIView):
 
 
 
+class ExecutionTimer:
+    """A context manager to measure execution time of a code block."""
+    def __init__(self, description, logs_list):
+        self.description = description
+        self.logs_list = logs_list
 
+    def __enter__(self):
+        self.start_time = time.monotonic()
+        return self
 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        duration_ms = (time.monotonic() - self.start_time) * 1000
+        self.logs_list.append({
+            "action": self.description,
+            "duration_ms": round(duration_ms, 2)
+        })
 
 class AdminProjectDetailView(APIView):
     permission_classes = [IsAdmin]
@@ -616,38 +631,42 @@ class AdminProjectDetailView(APIView):
         response.raise_for_status()
         return response.json().get("quota_set", {})
 
-    def extract_vm_info(self, servers, project_id, flavor_map):
+    def extract_vm_info(self, servers_data, flavor_map):
         vms = []
-        cpu_used, ram_used = 0, 0
+        cpu_used = 0
+        ram_used = 0
 
-        for server in servers:
-            if getattr(server, "project_id", None) != project_id:
+        for server in servers_data:
+            flavor_data = server.get("flavor", {})
+            flavor_id = flavor_data.get("id")
+
+            if not flavor_id:
                 continue
 
-            flavor_id_raw = str(server.flavor.get("id"))
-            flavor = flavor_map.get(flavor_id_raw)
+            flavor = flavor_map.get(str(flavor_id))
             if flavor:
                 cpu_used += flavor.vcpus
                 ram_used += flavor.ram
 
-            # Extract IP
-            ip = ""
-            for net in server.get("addresses", {}).values():
-                if isinstance(net, list) and net:
-                    ip = next(
-                        (a["addr"] for a in net if a.get("OS-EXT-IPS:type") == "floating" and a.get("version") == 4),
-                        next((a["addr"] for a in net if a.get("version") == 4), net[0].get("addr", ""))
+            ip_address = ""
+            for network in server.get("addresses", {}).values():
+                if isinstance(network, list) and network:
+                    ip_address = next(
+                        (addr["addr"] for addr in network if addr.get("OS-EXT-IPS:type") == "floating"),
+                        next((addr["addr"] for addr in network), "")
                     )
-                    break
+                    if ip_address:
+                        break
 
+            created_date = server.get("created", "")
             vms.append({
-                "id": server.id,
-                "name": server.name,
-                "status": server.status,
-                "ip": ip,
-                "created": server.created_at[:10] if server.created_at else "",
+                "id": server.get("id"),
+                "name": server.get("name"),
+                "status": server.get("status"),
+                "ip": ip_address,
+                "created": created_date[:10] if created_date else "",
                 "flavor": {
-                    "id": str(flavor.id) if flavor else flavor_id_raw,
+                    "id": str(flavor.id) if flavor else flavor_id,
                     "name": flavor.name if flavor else "Unknown",
                     "vcpus": flavor.vcpus if flavor else 0,
                     "ram": flavor.ram if flavor else 0,
@@ -658,44 +677,87 @@ class AdminProjectDetailView(APIView):
         return vms, cpu_used, ram_used
 
     def get(self, request, openstack_id):
-        # Step 1: Get DB Project
-        project = get_object_or_404(Project, openstack_id=openstack_id)
+        # MỚI: Khởi tạo các biến để đo lường thời gian
+        timing_logs = []
+        total_start_monotonic = time.monotonic()
+        total_start_utc = datetime.now(timezone.utc)
+
+        # THAY ĐỔI: Bọc từng hành động trong ExecutionTimer
+        with ExecutionTimer("1. DB: Get Project Details", timing_logs):
+            project = get_object_or_404(Project, openstack_id=openstack_id)
+
         project_id = request.auth.get("project_id")
 
-        owner_mapping = ProjectUserMapping.objects.filter(project=project, is_active=True).first()
-        owner = owner_mapping.user if owner_mapping else None
+        with ExecutionTimer("2. DB: Get Project Owner", timing_logs):
+            owner_mapping = ProjectUserMapping.objects.filter(project=project, is_active=True).first()
+            owner = owner_mapping.user if owner_mapping else None
 
-        # Step 2: Redis token
-        token = self.get_token_from_redis(request.user.username, project_id)
+        with ExecutionTimer("3. Redis: Get Keystone Token", timing_logs):
+            token = self.get_token_from_redis(request.user.username, project_id)
+
         if not token:
-            return Response({"error": "Token not found in Redis."}, status=401)
+            # MỚI: Thêm log tổng thời gian trước khi thoát
+            total_duration_ms = (time.monotonic() - total_start_monotonic) * 1000
+            timing_logs.append({
+                "action": "Total Request Time on Error",
+                "start_time_utc": total_start_utc.isoformat().replace('+00:00', 'Z'),
+                "end_time_utc": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                "duration_ms": round(total_duration_ms, 2)
+            })
+            return Response({
+                "error": "Token not found in Redis.",
+                "debug_timing": timing_logs
+            }, status=status.HTTP_401_UNAUTHORIZED)
 
         try:
-            # Step 3: Connect to OpenStack
-            conn = connect_with_token_v5(token, project_id)
-            atoken = get_admin_token()
+            with ExecutionTimer("4. OpenStack: Connect with User Token", timing_logs):
+                conn = connect_with_token_v5(token, project_id)
 
-            # Step 4: Fetch compute/storage quota concurrently
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                compute_future = executor.submit(self.get_compute_quota, openstack_id, atoken)
-                storage_future = executor.submit(self.get_storage_quota, openstack_id, atoken)
-                nova_quota = compute_future.result()
-                cinder_quota = storage_future.result()
+            with ExecutionTimer("5. OpenStack: Get Admin Token", timing_logs):
+                atoken = get_admin_token()
 
+            with ExecutionTimer("6. OpenStack: Get Quotas (Concurrent)", timing_logs):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    compute_future = executor.submit(self.get_compute_quota, openstack_id, atoken)
+                    storage_future = executor.submit(self.get_storage_quota, openstack_id, atoken)
+                    nova_quota = compute_future.result()
+                    cinder_quota = storage_future.result()
+
+            # Xử lý quota (hành động này rất nhanh, không cần đo)
             _, cpu_limit = self.safe_quota_get(nova_quota, "cores")
             _, ram_limit = self.safe_quota_get(nova_quota, "ram")
             storage_used, storage_limit = self.safe_quota_get(cinder_quota, "gigabytes")
 
-            # Step 5: Fetch flavor list once
-            flavors = conn.list_flavors()
+            with ExecutionTimer("7. OpenStack: List Flavors", timing_logs):
+                flavors = conn.list_flavors()
             flavor_map = {str(f.id): f for f in flavors}
-            flavor_map.update({str(f.name): f for f in flavors})
 
-            # Step 6: Fetch servers
-            servers = conn.list_servers()
-            vms, cpu_used, ram_used = self.extract_vm_info(servers, project.openstack_id, flavor_map)
+            with ExecutionTimer("8. OpenStack: List Servers (Detail)", timing_logs):
+                nova_endpoint = conn.session.get_endpoint(service_type='compute', interface='public')
+                auth_token = conn.session.get_token()
+                url = f"{nova_endpoint}/servers/detail"
+                headers = {"X-Auth-Token": auth_token}
+                params = {
+                    "project_id": openstack_id,
+                    "fields": "id,name,status,created,flavor,addresses"
+                }
+                response = requests.get(url, headers=headers, params=params, timeout=20)
+                response.raise_for_status()
+                servers_data = response.json().get("servers", [])
 
-            # Step 7: Compile response
+            with ExecutionTimer("9. Internal: Process VM Info", timing_logs):
+                vms, cpu_used, ram_used = self.extract_vm_info(servers_data, flavor_map)
+
+            # MỚI: Thêm log tổng thời gian khi thành công
+            total_duration_ms = (time.monotonic() - total_start_monotonic) * 1000
+            timing_logs.append({
+                "action": "Total Request Time",
+                "start_time_utc": total_start_utc.isoformat().replace('+00:00', 'Z'),
+                "end_time_utc": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                "duration_ms": round(total_duration_ms, 2)
+            })
+
+            # THAY ĐỔI: Thêm trường 'debug_timing' vào response
             return Response({
                 "id": str(project.id),
                 "name": project.name,
@@ -725,13 +787,31 @@ class AdminProjectDetailView(APIView):
                     "total_volume_gb": project.type.total_volume_gb,
                     "floating_ips": project.type.floating_ips,
                     "instances": project.type.instances,
-                } if project.type else None
+                } if project.type else None,
+                "debug_timing": timing_logs
             })
 
-        except requests.HTTPError as http_err:
-            return Response({"error": f"Quota fetch failed: {str(http_err)}"}, status=502)
-        except Exception as e:
-            return Response({"error": f"Unexpected error: {str(e)}"}, status=500)
+        except (requests.HTTPError, Exception) as e:
+            # MỚI: Thêm log tổng thời gian khi có lỗi
+            total_duration_ms = (time.monotonic() - total_start_monotonic) * 1000
+            timing_logs.append({
+                "action": "Total Request Time on Error",
+                "start_time_utc": total_start_utc.isoformat().replace('+00:00', 'Z'),
+                "end_time_utc": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                "duration_ms": round(total_duration_ms, 2)
+            })
+
+            error_message = f"Unexpected error: {str(e)}"
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            if isinstance(e, requests.HTTPError):
+                error_message = f"Quota fetch failed: {str(e)}"
+                status_code = status.HTTP_502_BAD_GATEWAY
+
+            return Response({
+                "error": error_message,
+                "debug_timing": timing_logs
+            }, status=status_code)
+
 
 class AdminProjectBasicInfoView(APIView):
     permission_classes = [IsAdmin]
